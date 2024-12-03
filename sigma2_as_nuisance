@@ -70,9 +70,9 @@ class BayesianSGDModel:
 
         self.u_param = self.compute_u_param(self.X)
 
-        self.update_sigma2_param(self.X, self.lambda_param, Y)
+        #self.update_sigma2_param(self.X, self.lambda_param, Y)
 
-        #self.sigma2_param = sigma2_0.clone()
+        self.sigma2_param = sigma2_0.clone()
 
         #self.log_sigma2_param = log_sigma2.clone().detach()
         '''
