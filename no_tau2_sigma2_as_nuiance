@@ -1,0 +1,203 @@
+import torch
+import torch.nn.functional as F
+import torch.optim as optim
+import numpy as np
+
+# Set random seed for reproducibility
+torch.manual_seed(0)
+
+class BayesianSGDModel:
+    def __init__(self, learning_rate=0.001, epochs=1000, batch_size=10, tolerance=1e-4, q=3):
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.tolerance = tolerance
+        self.q = q 
+        self.lambda_param = None
+        self.X = None
+        self.u_param = None
+        #self.log_sigma2_param = None
+        self.sigma2_param = None
+        self.optimizer = None
+        self.loss_history = [] 
+        self.log_likelihood_history = []
+        self.log_prior_history = []
+
+    def compute_u_param(self, X):
+        Q, R = torch.linalg.qr(X)
+        u_param = Q  # Set u_param to the orthonormal matrix Q
+        return u_param
+
+    def update_sigma2_param(self, X, lambda_param, Y):
+        N = self.X.shape[0]
+        t = int(N*(N-1)/2)
+        q = self.X.shape[1]
+        M = Y.shape[0]
+
+        self.u_param = self.compute_u_param(X)
+        
+        sqrt_lambda = torch.sqrt(torch.abs(lambda_param))
+        sign_sqrt_lambda = torch.sign(lambda_param) * sqrt_lambda
+
+        sqrt_lambda_u = sqrt_lambda.unsqueeze(1) * self.u_param
+        sign_sqrt_lambda_u = sign_sqrt_lambda.unsqueeze(1) * self.u_param
+
+        latent_effect = torch.matmul(sqrt_lambda_u, sign_sqrt_lambda_u.transpose(-1, -2))
+        
+        upper_indices = torch.triu_indices(N, N, offset=1)
+        
+        latent_effect_reshaped = latent_effect[:, upper_indices[0], upper_indices[1]]
+        y_reshaped = Y[:, upper_indices[0], upper_indices[1]]
+        res = torch.sum((y_reshaped - latent_effect_reshaped) ** 2, dim=0)
+     
+        #self.sigma2_param = res/(M*t-M*q-N*q)
+        self.sigma2_param = res/M
+
+    def initialize_parameters_and_sigma2(self, M, N, q, Y):
+
+        #self.tau2_param = tau2_0.clone().detach()
+
+        #self.tau2_param.requires_grad_() 
+        
+        self.lambda_param = lamb_0.clone().detach()
+
+        self.lambda_param.requires_grad_() 
+
+        self.X = x_0.clone().detach()
+
+        self.X.requires_grad_()
+
+        self.u_param = self.compute_u_param(self.X)
+
+        #self.update_sigma2_param(self.X, self.lambda_param, Y)
+
+        self.sigma2_param = sigma2_0.clone()
+
+        #self.log_sigma2_param = log_sigma2.clone().detach()
+        '''
+        torch.manual_seed(42)
+        self.lambda_param = torch.randn((M, q), dtype=torch.float32, requires_grad=True)
+        self.X = torch.randn(N, q, requires_grad=True)
+        self.u_param = self.compute_u_param(self.X)
+        #self.log_sigma2_param = torch.randn(t, dtype=torch.float32, requires_grad=True)
+        self.update_sigma2_param(self.X, self.lambda_param, Y)
+        '''
+    def log_prior_X(self, X, q, N):
+        trace_term = torch.trace(X @ X.t())
+        log_prob = -0.5 * trace_term - (N * q / 2) * torch.log(torch.tensor(2 * torch.pi, dtype=X.dtype, device=X.device))
+        return log_prob
+    '''
+    def log_prior_log_sigma2(self, log_sigma2_param):
+        # Assuming a standard Gaussian prior on log_sigma2
+        # log(p(log_sigma2)) = -0.5 * (log_sigma2^2 + log(2 * pi))
+        log_prob_log_sigma2 = -0.5 * torch.sum(log_sigma2_param**2 + torch.log(2 * torch.pi * torch.ones_like(log_sigma2_param)))
+        return log_prob_log_sigma2
+    '''
+    
+    def log_likelihood(self, y_data, lambda_param, X, sigma2_param):
+        batch_size, N, _ = y_data.shape
+        u_param = self.compute_u_param(X)
+        lambda_u = lambda_param.unsqueeze(1) * u_param
+        u_rep = u_param.unsqueeze(0).repeat(batch_size, 1, 1)
+    
+        latent_effect = torch.matmul(lambda_u, u_rep.transpose(-1, -2))
+        upper_indices = torch.triu_indices(N, N, offset=1)
+        latent_effect_reshaped = latent_effect[:, upper_indices[0], upper_indices[1]]
+        y_reshaped = y_data[:, upper_indices[0], upper_indices[1]]
+    
+        residuals = y_reshaped - latent_effect_reshaped
+        #sigma2 = torch.exp(log_sigma2_param)  
+        sigma2 = sigma2_param 
+    
+        log_likelihood = (
+            0.5 * batch_size * torch.sum(torch.log(2 * torch.pi * sigma2)) +
+            torch.sum((residuals ** 2) / (2 * sigma2))
+        )
+    
+        return -log_likelihood
+
+    def loss_function(self, y_data, lambda_param, X, sigma2_param, q):
+        M, N, _ = y_data.shape
+        log_prior = self.log_prior_X(lambda_param, q,M) + self.log_prior_X(X, q, N) 
+        # + self.log_prior_log_sigma2(log_sigma2_param)
+        log_lik = self.log_likelihood(y_data, lambda_param, X, sigma2_param)
+
+        return -(log_prior + log_lik)
+
+    def fit(self, y_data, q):
+        M, N, _ = y_data.shape
+        self.initialize_parameters_and_sigma2(M, N, q, y_data)
+
+        # Use optim.SGD to optimize the parameters
+        self.optimizer = optim.SGD([self.lambda_param, self.X], lr=self.learning_rate)
+
+        # Track loss and log-likelihood
+
+        true_loss = self.loss_function(y_data, lamb_0, x_0, sigma2_0, q=5).item()
+
+        print(f"true loss {true_loss}")
+
+        initial_loss = self.loss_function(y_data, self.lambda_param, self.X, self.sigma2_param, q).item()
+        print(f"initial loss {initial_loss}")
+        self.loss_history.append(initial_loss)
+
+        initial_log_likelihood = self.log_likelihood(y_data, self.lambda_param, self.X, self.sigma2_param).item()
+        print(f"initial log likelihood {initial_log_likelihood}")
+        self.log_likelihood_history.append(initial_log_likelihood)
+
+        initial_log_prior = (self.log_prior_X(self.lambda_param, q, M) + self.log_prior_X(self.X, q, N)
+                             ).item()
+                        # + self.log_prior_log_sigma2(self.log_sigma2_param).item()
+        print(f"initial log prior {initial_log_prior}")
+        self.log_prior_history.append(initial_log_prior)
+
+        previous_loss = None
+
+        torch.manual_seed(12)
+        for epoch in range(self.epochs):
+            # Shuffle data at the beginning of each epoch
+            indices = torch.randperm(M)
+            y_data_shuffled = y_data[indices]
+           
+
+            # Mini-batch gradient descent
+            for i in range(0, M, self.batch_size):
+                batch_indices = indices[i:i + self.batch_size]
+                y_batch = y_data_shuffled[batch_indices]
+                lambda_param_batch = self.lambda_param[batch_indices] 
+
+                self.optimizer.zero_grad()
+                loss = self.loss_function(y_batch, lambda_param_batch, self.X, self.sigma2_param, q)
+                loss.backward(retain_graph=True)
+                self.optimizer.step()
+
+                # Update sigma2 after each batch
+                self.update_sigma2_param(self.X, lambda_param_batch, y_batch)
+
+            # Calculate the current loss for the entire dataset at the end of the epoch
+            current_loss = self.loss_function(y_data_shuffled, self.lambda_param, self.X, self.sigma2_param, q).item()
+            print(f"Epoch {epoch+1}: Loss {current_loss}")
+
+            # Check for convergence based on loss change between epochs
+            if previous_loss is not None and abs(previous_loss - current_loss) < self.tolerance:
+                print(f"Convergence reached at epoch {epoch}.")
+                break
+
+            # Update previous_loss for the next epoch comparison
+            previous_loss = current_loss
+
+            # Record loss, log-likelihood, and log prior every 10 epochs
+            if (epoch + 1) % 1 == 0:
+                self.loss_history.append(current_loss)
+            
+                log_likelihood = self.log_likelihood(y_data_shuffled, self.lambda_param, self.X, self.sigma2_param).item()
+                print(f"Epoch {epoch+1}: Log Likelihood {log_likelihood}")
+                self.log_likelihood_history.append(log_likelihood)
+
+                log_prior = (self.log_prior_X(self.lambda_param,q,M) + self.log_prior_X(self.X, q, N)
+                            ).item()
+                        # + self.log_prior_log_sigma2(self.log_sigma2_param).item()
+                print(f"Epoch {epoch+1}: Log Prior {log_prior}")
+                self.log_prior_history.append(log_prior)
+
+        return self.lambda_param, self.X, self.u_param, self.sigma2_param
